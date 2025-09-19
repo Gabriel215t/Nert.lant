@@ -1,0 +1,318 @@
+<a href="https://wa.me/1234567890?text=Hola%20quiero%20más%20información" target="_blank">
+  <button>Enviar WhatsApp</button>
+</a>
+                    Ver Página
+                </button>
+                <button id="view-code-button" class="bg-[#1a1a1a] text-gray-200 font-medium py-2 px-4 border border-[#2d2d2d] hover:bg-[#2d2d2d] transition-colors">
+                    Ver Código
+                </button>
+                <button id="refine-button" class="bg-[#1a1a1a] text-gray-200 font-medium py-2 px-4 border border-[#2d2d2d] hover:bg-[#2d2d2d] transition-colors">
+
+                    Mejora el Código ✨
+                </button>
+                <button id="image-button" class="bg-[#1a1a1a] text-gray-200 font-medium py-2 px-4 border border-[#2d2d2d] hover:bg-[#2d2d2d] transition-colors">
+                    Generar Imagen ✨
+                </button>
+            </div>
+            <div id="output-container" class="bg-black border border-[#2d2d2d] flex flex-col">
+                <iframe id="preview-frame" src="about:blank" class="flex-grow"></iframe>
+                <pre id="output-code" class="bg-[#1a1a1a] text-gray-50 p-4 overflow-y-auto hidden flex-grow"></pre>
+            </div>
+            <div class="flex justify-end mt-4">
+                <button id="copy-button" class="bg-[#1a1a1a] text-gray-200 font-medium py-2 px-4 border border-[#2d2d2d] hover:bg-[#2d2d2d] transition-colors">
+                    Copiar código
+                </button>
+            </div>
+            <p id="copy-message" class="text-sm text-green-400 text-right opacity-0 transition-opacity duration-300">Copiado al portapapeles</p>
+        </section>
+        
+        <!-- Modal para las nuevas funciones -->
+        <div id="feature-modal" class="modal">
+            <div class="modal-content relative">
+                <span class="modal-close" id="modal-close">&times;</span>
+                <h3 id="modal-title" class="text-xl font-bold mb-4"></h3>
+                <textarea id="modal-input" class="w-full h-24 p-2 text-gray-100 bg-[#0d0d0d] border border-[#2d2d2d] focus:outline-none focus:ring-1 focus:ring-[#8d8d8d] transition-colors" placeholder="Describe lo que quieres." rows="3"></textarea>
+                <div class="modal-buttons mt-4">
+                    <button id="modal-submit-button" class="bg-[#2d2d2d] text-gray-200 font-medium py-2 px-4 border border-[#2d2d2d] hover:bg-[#4d4d4d] transition-colors">
+                        Generar
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <footer class="text-center text-sm text-gray-500 mt-8">
+            <p>&copy; 2024 Nert.Com. Hecho con ❤️ y Gemini.</p>
+        </footer>
+    </div>
+
+    <script>
+        const promptInput = document.getElementById('prompt-input');
+        const generateButton = document.getElementById('generate-button');
+        const outputSection = document.getElementById('output-section');
+        const outputCode = document.getElementById('output-code');
+        const loadingSpinner = document.getElementById('loading-spinner');
+        const copyButton = document.getElementById('copy-button');
+        const copyMessage = document.getElementById('copy-message');
+        const previewFrame = document.getElementById('preview-frame');
+        const viewPageButton = document.getElementById('view-page-button');
+        const viewCodeButton = document.getElementById('view-code-button');
+
+        const refineButton = document.getElementById('refine-button');
+        const imageButton = document.getElementById('image-button');
+        
+        const modal = document.getElementById('feature-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalInput = document.getElementById('modal-input');
+        const modalSubmitButton = document.getElementById('modal-submit-button');
+        const modalClose = document.getElementById('modal-close');
+
+        const API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=";
+        const IMAGE_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=";
+        const apiKey = "";
+        
+        // Función para logging simple
+        const log = (message) => console.log(message);
+        const error = (message) => console.error(message);
+
+        let retryDelay = 1000;
+        let currentMode = ''; // 'refine' or 'image'
+
+        // Muestra u oculta el spinner de carga
+        const toggleLoading = (isLoading) => {
+            if (isLoading) {
+                loadingSpinner.classList.remove('hidden');
+                generateButton.classList.add('hidden');
+                refineButton.classList.add('hidden');
+                imageButton.classList.add('hidden');
+            } else {
+                loadingSpinner.classList.add('hidden');
+                generateButton.classList.remove('hidden');
+                if (outputCode.textContent) {
+                    refineButton.classList.remove('hidden');
+                    imageButton.classList.remove('hidden');
+                }
+            }
+        };
+
+        // Lógica de reintento para las llamadas a la API
+        const fetchWithRetry = async (url, options) => {
+            try {
+                const response = await fetch(url, options);
+                if (response.status === 429) {
+                    log("Too many requests, retrying...");
+                    await new Promise(res => setTimeout(res, retryDelay));
+                    retryDelay *= 2;
+                    return fetchWithRetry(url, options);
+                }
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                retryDelay = 1000;
+                return response;
+            } catch (e) {
+                error("Fetch failed:", e);
+                return null;
+            }
+        };
+
+        // Generar el código HTML desde un prompt
+        const generateHtml = async (prompt) => {
+            const systemPrompt = `Eres un asistente de IA muy avanzado que crea páginas web. Recibes una descripción de una página web y tu tarea es generar un código HTML completo y bien estructurado, que incluya estilos CSS integrados (usa Tailwind CSS) y JavaScript si es necesario. La página debe ser visualmente atractiva, responsiva y funcional. Tu respuesta debe ser solo el código HTML. No incluyas explicaciones ni texto adicional fuera del bloque de código.`;
+            const payload = {
+                contents: [{ parts: [{ text: prompt }] }],
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+            };
+            const response = await fetchWithRetry(`${API_URL}${apiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (response) {
+                const result = await response.json();
+                const text = result.candidates?.[0]?.content?.parts?.[0]?.text || "Error: No se pudo generar el contenido.";
+                return text.replace(/```html\n?|```/g, '').trim();
+            }
+            return "Error: No se pudo conectar con el servicio.";
+        };
+
+        // Refinar el código HTML existente
+        const refineHtml = async (currentHtml, refinementPrompt) => {
+            const systemPrompt = `Eres un asistente de IA muy avanzado que refina el código HTML de páginas web. Recibes el código HTML actual y una descripción del cambio que se necesita. Tu tarea es modificar el código existente para cumplir con la petición. Solo devuelve el código HTML completo y actualizado. No incluyas explicaciones ni texto adicional fuera del bloque de código.`;
+            const prompt = `Código actual: ${currentHtml}\n\nSolicitud de refinamiento: ${refinementPrompt}`;
+            const payload = {
+                contents: [{ parts: [{ text: prompt }] }],
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+            };
+            const response = await fetchWithRetry(`${API_URL}${apiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (response) {
+                const result = await response.json();
+                const text = result.candidates?.[0]?.content?.parts?.[0]?.text || "Error: No se pudo refinar el código.";
+                return text.replace(/```html\n?|```/g, '').trim();
+            }
+            return "Error: No se pudo conectar con el servicio.";
+        };
+
+        // Generar una imagen
+        const generateImage = async (imagePrompt) => {
+            const payload = { instances: { prompt: imagePrompt }, parameters: { "sampleCount": 1} };
+            const response = await fetchWithRetry(`${IMAGE_API_URL}${apiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (response) {
+                const result = await response.json();
+                const base64Data = result?.predictions?.[0]?.bytesBase64Encoded;
+                if (base64Data) {
+                    return `data:image/png;base64,${base64Data}`;
+                }
+            }
+            return null;
+        };
+
+        // Función para mostrar la vista de la página o el código
+        const showView = (view) => {
+            if (view === 'page') {
+                previewFrame.classList.remove('hidden');
+                outputCode.classList.add('hidden');
+                viewPageButton.classList.add('bg-[#2d2d2d]');
+                viewPageButton.classList.remove('bg-[#1a1a1a]');
+                viewCodeButton.classList.remove('bg-[#2d2d2d]');
+                viewCodeButton.classList.add('bg-[#1a1a1a]');
+            } else {
+                previewFrame.classList.add('hidden');
+                outputCode.classList.remove('hidden');
+                viewCodeButton.classList.add('bg-[#2d2d2d]');
+                viewCodeButton.classList.remove('bg-[#1a1a1a]');
+                viewPageButton.classList.remove('bg-[#2d2d2d]');
+                viewPageButton.classList.add('bg-[#1a1a1a]');
+            }
+        };
+
+        // Event Listeners
+        viewPageButton.addEventListener('click', () => showView('page'));
+        viewCodeButton.addEventListener('click', () => showView('code'));
+
+        generateButton.addEventListener('click', async () => {
+            const prompt = promptInput.value.trim();
+            if (prompt === "") {
+                promptInput.placeholder = "¡Por favor, escribe una descripción!";
+                return;
+            }
+
+            toggleLoading(true);
+            outputSection.classList.add('hidden');
+            outputCode.textContent = '';
+            previewFrame.src = 'about:blank';
+
+            const userQuery = `Crea el código HTML completo y responsivo para una página web que cumpla con la siguiente descripción: "${prompt}"`;
+            const generatedHtml = await generateHtml(userQuery);
+
+            if (generatedHtml) {
+                outputCode.textContent = generatedHtml;
+                const blob = new Blob([generatedHtml], { type: 'text/html' });
+                const blobUrl = URL.createObjectURL(blob);
+                previewFrame.src = blobUrl;
+                outputSection.classList.remove('hidden');
+                showView('page');
+            } else {
+                outputCode.textContent = "Lo siento, no pude generar el contenido. Por favor, intenta de nuevo.";
+                outputSection.classList.remove('hidden');
+                showView('code');
+            }
+
+            toggleLoading(false);
+        });
+
+        // Lógica para los nuevos botones de IA
+        refineButton.addEventListener('click', () => {
+            currentMode = 'refine';
+            modalTitle.textContent = 'Mejora tu Código';
+            modalInput.placeholder = 'Ejemplo: "Cambia el color de fondo a azul marino y añade un efecto de sombra."';
+            modal.style.display = 'flex';
+        });
+
+        imageButton.addEventListener('click', () => {
+            currentMode = 'image';
+            modalTitle.textContent = 'Genera una Imagen';
+            modalInput.placeholder = 'Ejemplo: "Un logo moderno de una galaxia con un planeta."';
+            modal.style.display = 'flex';
+        });
+
+        modalClose.addEventListener('click', () => {
+            modal.style.display = 'none';
+        });
+
+        modalSubmitButton.addEventListener('click', async () => {
+            const prompt = modalInput.value.trim();
+            if (!prompt) return;
+
+            modal.style.display = 'none';
+            toggleLoading(true);
+
+            if (currentMode === 'refine') {
+                const currentHtml = outputCode.textContent;
+                const refinedHtml = await refineHtml(currentHtml, prompt);
+                outputCode.textContent = refinedHtml;
+                const blob = new Blob([refinedHtml], { type: 'text/html' });
+                const blobUrl = URL.createObjectURL(blob);
+                previewFrame.src = blobUrl;
+                showView('page');
+            } else if (currentMode === 'image') {
+                const imageUrl = await generateImage(prompt);
+                if (imageUrl) {
+                    const html = `
+                        <div style="display: flex; justify-content: center; align-items: center; height: 100%; background-color: #0d0d0d;">
+                            <img src="${imageUrl}" alt="Imagen generada por IA" style="max-width: 90%; max-height: 90%; border: 1px solid #2d2d2d;"/>
+                        </div>
+                    `;
+                    const blob = new Blob([html], { type: 'text/html' });
+                    const blobUrl = URL.createObjectURL(blob);
+                    previewFrame.src = blobUrl;
+                    outputCode.textContent = `¡Imagen generada!\nNo hay código HTML para esta vista, pero puedes descargar la imagen.`;
+                    showView('page');
+                } else {
+                    outputCode.textContent = "Lo siento, no pude generar la imagen. Por favor, intenta de nuevo.";
+                    showView('code');
+                }
+            }
+
+            toggleLoading(false);
+        });
+
+        copyButton.addEventListener('click', () => {
+            const code = outputCode.textContent;
+            try {
+                navigator.clipboard.writeText(code);
+                copyMessage.classList.remove('opacity-0');
+                copyMessage.classList.add('opacity-100');
+                setTimeout(() => {
+                    copyMessage.classList.remove('opacity-100');
+                    copyMessage.classList.add('opacity-0');
+                }, 2000);
+            } catch (err) {
+                const textarea = document.createElement('textarea');
+                textarea.value = code;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+
+                copyMessage.textContent = 'Copiado (método alternativo)';
+                copyMessage.classList.remove('opacity-0');
+                copyMessage.classList.add('opacity-100');
+                setTimeout(() => {
+                    copyMessage.classList.remove('opacity-100');
+                    copyMessage.classList.add('opacity-0');
+                    copyMessage.textContent = 'Copiado al portapapeles';
+                }, 2000);
+            }
+        });
+
+    </script>
+</body>
+</html>
